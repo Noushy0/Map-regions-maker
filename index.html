@@ -158,7 +158,7 @@
     </div>
     <div class="region-list" id="regionList"></div>
     <div class="sidebar-footer">
-      <button class="download-btn" id="downloadBtn">Télécharger le GeoJSON ajusté</button>
+      <button class="download-btn" id="downloadBtn">Télécharger (format Supabase)</button>
       <button class="reset-all" id="resetAllBtn">Réinitialiser tous les décalages</button>
       <button class="reset-all" id="undoBtn">↺ Annuler (Ctrl+Z)</button>
     </div>
@@ -652,14 +652,29 @@ document.getElementById('resetAllBtn').addEventListener('click', () => {
 
 document.getElementById('undoBtn').addEventListener('click', undo);
 
+function toMultiPolygonCoords(geom){
+  if (geom.type === 'MultiPolygon') return geom.coordinates;
+  if (geom.type === 'Polygon') return [geom.coordinates];
+  return [];
+}
+
 document.getElementById('downloadBtn').addEventListener('click', () => {
-  const out = clone(RAW_GEOJSON);
-  out.features = out.features.map((f, i) => buildShiftedFeature(i));
-  const blob = new Blob([JSON.stringify(out)], {type: 'application/geo+json'});
+  const rows = RAW_GEOJSON.features.map((f, i) => {
+    const shifted = buildShiftedFeature(i);
+    return {
+      name: state[i].name,
+      color_hex: state[i].fill,
+      boundary_geojson: {
+        type: 'MultiPolygon',
+        coordinates: toMultiPolygonCoords(shifted.geometry)
+      }
+    };
+  });
+  const blob = new Blob([JSON.stringify(rows, null, 2)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'france_wine_regions_adjusted.geojson';
+  a.download = 'france_wine_regions_rows.json';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
