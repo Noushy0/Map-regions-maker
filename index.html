@@ -126,7 +126,7 @@
   <div id="map"></div>
   <div class="edit-toolbar" id="editToolbar">
     <div class="title">Édition des points — <span id="editRegionName"></span></div>
-    <div class="hint">Glissez sur le fond pour sélectionner plusieurs points. Maj+clic pour ajouter/retirer un point. Flèches pour affiner, Suppr pour effacer la sélection. Échap pour quitter.</div>
+    <div class="hint">Glissez sur le fond pour sélectionner plusieurs points. Maj+clic pour ajouter/retirer un point. Flèches pour affiner, Suppr pour effacer la sélection (une zone entièrement sélectionnée est supprimée). Échap pour quitter.</div>
     <div class="row">
       <span class="vertex-count" id="vertexCount">0 point(s) sélectionné(s)</span>
     </div>
@@ -137,11 +137,23 @@
       <button id="exitEditBtn" class="primary">Terminer</button>
     </div>
   </div>
+  <div class="edit-toolbar" id="drawToolbar">
+    <div class="title">Dessiner une nouvelle région</div>
+    <div class="hint">Cliquez sur la carte pour poser des points, dans l'ordre du contour. Suppr pour retirer le dernier point. Échap pour annuler.</div>
+    <div class="row">
+      <span class="vertex-count" id="drawPointCount">0 point(s) posé(s)</span>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button id="drawFinishBtn" class="primary">Fermer la forme ✓</button>
+      <button id="drawCancelBtn" class="danger">Annuler ✕</button>
+    </div>
+  </div>
   <div class="sidebar">
     <div class="sidebar-header">
       <h1>Régions viticoles</h1>
       <p>Cliquez une région pour la déplacer en bloc, ou passez en mode points pour ajuster des sommets individuellement.</p>
       <button class="import-btn" id="svgImportBtn">＋ Importer un SVG (nouvelle région)</button>
+      <button class="import-btn" id="penModeBtn" style="margin-top:6px;">✏️ Dessiner une région</button>
       <input type="file" id="svgFileInput" accept=".svg,image/svg+xml" style="display:none">
     </div>
     <div class="region-list" id="regionList"></div>
@@ -314,6 +326,7 @@ function rebuildEditMarkers(){
 
 function enterEditMode(i){
   if (editIndex !== null) exitEditMode();
+  if (penMode) exitPenMode();
   editIndex = i;
   document.querySelectorAll('.region').forEach((el, idx) => el.classList.toggle('point-editing', idx === i));
   document.querySelectorAll('.point-edit-btn').forEach((btn, idx) => btn.classList.toggle('on', idx === i));
@@ -373,18 +386,55 @@ function deleteSelected(){
     if (!byRing.has(v.ring)) byRing.set(v.ring, new Set());
     byRing.get(v.ring).add(v.idx);
   });
-  let blocked = false;
+
+  const geom = RAW_GEOJSON.features[editIndex].geometry;
+  const containerOf = new Map();
+  if (geom.type === 'Polygon') {
+    geom.coordinates.forEach(ring => containerOf.set(ring, geom.coordinates));
+  } else if (geom.type === 'MultiPolygon') {
+    geom.coordinates.forEach(poly => poly.forEach(ring => containerOf.set(ring, poly)));
+  }
+
   byRing.forEach((idxSet, ring) => {
-    const closed = ring.length > 2 && ptsEqual(ring[0], ring[ring.length-1]);
-    const uniqueCount = closed ? ring.length - 1 : ring.length;
-    if (uniqueCount - idxSet.size < 3) { blocked = true; return; }
     const sorted = [...idxSet].sort((a,b) => b-a);
     sorted.forEach(idx => ring.splice(idx, 1));
-    if (closed && ring.length > 0) ring[ring.length-1] = [ring[0][0], ring[0][1]];
+    const closed = ring.length > 0 && ptsEqual(ring[0], ring[ring.length-1]);
+    const uniqueCount = closed ? ring.length - 1 : ring.length;
+    if (uniqueCount < 3) {
+      // not enough points left to form a shape — drop the whole ring/zone
+      const container = containerOf.get(ring);
+      if (container) {
+        const ri = container.indexOf(ring);
+        if (ri !== -1) container.splice(ri, 1);
+      }
+    } else if (closed) {
+      ring[ring.length-1] = [ring[0][0], ring[0][1]];
+    }
   });
-  if (blocked) vertexCountEl.textContent += ' — certains contours ont besoin d’au moins 3 points, non modifiés';
-  rebuildEditMarkers();
-  renderLayer(editIndex);
+
+  if (geom.type === 'MultiPolygon') {
+    geom.coordinates = geom.coordinates.filter(poly => poly.length > 0);
+  }
+  const isEmpty = geom.coordinates.length === 0;
+
+  if (isEmpty) {
+    const removedIdx = editIndex;
+    exitEditMode();
+    RAW_GEOJSON.features.splice(removedIdx, 1);
+    state.splice(removedIdx, 1);
+    fullRerender();
+  } else {
+    rebuildEditMarkers();
+    renderLayer(editIndex);
+  }
+}
+
+function removeRegion(i){
+  snapshot();
+  if (editIndex === i) exitEditMode();
+  RAW_GEOJSON.features.splice(i, 1);
+  state.splice(i, 1);
+  fullRerender();
 }
 
 /* --- dragging a vertex (or a selection of vertices) --- */
@@ -549,6 +599,7 @@ function addRegionRow(i){
       <button class="nudge-btn n-down" data-dir="down">↓</button>
     </div>
     <button class="point-edit-btn" data-idx="${i}">Modifier les points ✎</button>
+    <button class="point-edit-btn" data-idx="${i}" style="color:var(--danger);border-color:var(--danger);">🗑 Supprimer la région</button>
   `;
   div.querySelector('.region-top').addEventListener('click', (e) => {
     if (e.target.tagName !== 'INPUT') selectRegion(i);
@@ -573,6 +624,10 @@ function addRegionRow(i){
   div.querySelector('.point-edit-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     if (editIndex === i) exitEditMode(); else enterEditMode(i);
+  });
+  div.querySelectorAll('.point-edit-btn')[1].addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (confirm('Supprimer la région "' + state[i].name + '" ?')) removeRegion(i);
   });
   list.appendChild(div);
 }
@@ -749,6 +804,105 @@ document.getElementById('svgFileInput').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (file) handleSvgFile(file);
   e.target.value = '';
+});
+
+/* ---------------- Pen tool: draw a new region by clicking points on the map ---------------- */
+
+let penMode = false;
+let penPoints = [];       // [lon, lat] in drawing order
+let penMarkers = [];
+let penLine = null;
+const drawToolbar = document.getElementById('drawToolbar');
+const drawPointCountEl = document.getElementById('drawPointCount');
+const penModeBtn = document.getElementById('penModeBtn');
+
+function updateDrawCount(){
+  drawPointCountEl.textContent = penPoints.length + ' point(s) posé(s)';
+}
+
+function penLatLngs(){
+  return penPoints.map(p => L.latLng(p[1], p[0]));
+}
+
+function redrawPenLine(){
+  if (penLine) map.removeLayer(penLine);
+  if (penPoints.length > 0) {
+    penLine = L.polyline(penLatLngs(), { color: '#c98a2c', weight: 2, dashArray: '5,4' }).addTo(map);
+  }
+}
+
+function onPenClick(e){
+  penPoints.push([e.latlng.lng, e.latlng.lat]);
+  const m = L.circleMarker(e.latlng, { radius: 4, weight: 1.5, color: '#6b1e3c', fillColor: '#c98a2c', fillOpacity: 1 }).addTo(map);
+  penMarkers.push(m);
+  redrawPenLine();
+  updateDrawCount();
+}
+
+function enterPenMode(){
+  if (editIndex !== null) exitEditMode();
+  penMode = true;
+  penPoints = [];
+  penMarkers = [];
+  penLine = null;
+  document.getElementById('map').classList.add('editing');
+  penModeBtn.classList.add('on');
+  drawToolbar.classList.add('show');
+  map.on('click', onPenClick);
+  updateDrawCount();
+}
+
+function clearPenLayers(){
+  penMarkers.forEach(m => map.removeLayer(m));
+  penMarkers = [];
+  if (penLine) { map.removeLayer(penLine); penLine = null; }
+  penPoints = [];
+}
+
+function exitPenMode(){
+  penMode = false;
+  clearPenLayers();
+  document.getElementById('map').classList.remove('editing');
+  penModeBtn.classList.remove('on');
+  drawToolbar.classList.remove('show');
+  map.off('click', onPenClick);
+}
+
+function finishPenDrawing(){
+  if (penPoints.length < 3) { alert('Il faut au moins 3 points pour fermer une forme.'); return; }
+  snapshot();
+  const ring = penPoints.slice();
+  ring.push([ring[0][0], ring[0][1]]);
+  const fill = importPalette[RAW_GEOJSON.features.length % importPalette.length];
+  const feature = { type: 'Feature', properties: { fill }, geometry: { type: 'Polygon', coordinates: [ring] } };
+  const idx = addNewRegion(feature, 'Région dessinée');
+  exitPenMode();
+  selectRegion(idx);
+}
+
+penModeBtn.addEventListener('click', () => {
+  if (penMode) exitPenMode(); else enterPenMode();
+});
+document.getElementById('drawFinishBtn').addEventListener('click', finishPenDrawing);
+document.getElementById('drawCancelBtn').addEventListener('click', exitPenMode);
+
+document.addEventListener('keydown', (e) => {
+  if (!penMode) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.key === 'Escape') { exitPenMode(); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    if (penPoints.length > 0) {
+      penPoints.pop();
+      const m = penMarkers.pop();
+      if (m) map.removeLayer(m);
+      redrawPenLine();
+      updateDrawCount();
+    }
+    return;
+  }
+  if (e.key === 'Enter') { finishPenDrawing(); }
 });
 </script>
 </body>
