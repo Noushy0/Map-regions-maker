@@ -119,11 +119,27 @@
     pointer-events:none;z-index:900;
   }
   .vertex-count{color:var(--muted);}
+  .copy-btn{
+    width:100%;background:var(--paper);color:var(--wine-dark);border:1px solid var(--wine);border-radius:8px;padding:10px 14px;
+    font-size:13.5px;font-weight:600;cursor:pointer;letter-spacing:.2px;margin-bottom:8px;
+    font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+  }
+  .copy-btn:hover{background:#f1e6dc;}
+  .copy-btn.copied{background:var(--wine);color:#fff;}
+  .clean-view-btn{
+    position:absolute;top:14px;right:14px;z-index:1000;background:rgba(255,255,255,0.97);
+    border:1px solid var(--border);border-radius:10px;padding:9px 14px;cursor:pointer;
+    font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12.5px;font-weight:600;color:var(--wine-dark);
+    box-shadow:0 4px 14px rgba(0,0,0,0.12);
+  }
+  .clean-view-btn:hover{border-color:var(--gold);background:#f1e6dc;}
+  .clean-view-btn.on{background:var(--wine);color:#fff;border-color:var(--wine);}
 </style>
 </head>
 <body>
 <div class="app">
   <div id="map"></div>
+  <button class="clean-view-btn" id="cleanViewBtn">🧹 Vue propre</button>
   <div class="edit-toolbar" id="editToolbar">
     <div class="title">Édition des points — <span id="editRegionName"></span></div>
     <div class="hint">Glissez sur le fond pour sélectionner plusieurs points. Maj+clic pour ajouter/retirer un point. Flèches pour affiner, Suppr pour effacer la sélection (une zone entièrement sélectionnée est supprimée). Échap pour quitter.</div>
@@ -158,6 +174,7 @@
     </div>
     <div class="region-list" id="regionList"></div>
     <div class="sidebar-footer">
+      <button class="copy-btn" id="copyBtn">📋 Copier le code</button>
       <button class="download-btn" id="downloadBtn">Télécharger (format Supabase)</button>
       <button class="reset-all" id="resetAllBtn">Réinitialiser tous les décalages</button>
       <button class="reset-all" id="undoBtn">↺ Annuler (Ctrl+Z)</button>
@@ -658,8 +675,8 @@ function toMultiPolygonCoords(geom){
   return [];
 }
 
-document.getElementById('downloadBtn').addEventListener('click', () => {
-  const rows = RAW_GEOJSON.features.map((f, i) => {
+function buildExportRows(){
+  return RAW_GEOJSON.features.map((f, i) => {
     const shifted = buildShiftedFeature(i);
     return {
       name: state[i].name,
@@ -670,6 +687,10 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
       }
     };
   });
+}
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const rows = buildExportRows();
   const blob = new Blob([JSON.stringify(rows, null, 2)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -679,6 +700,52 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+});
+
+const copyBtn = document.getElementById('copyBtn');
+copyBtn.addEventListener('click', () => {
+  const text = JSON.stringify(buildExportRows(), null, 2);
+  const onCopied = () => {
+    const original = copyBtn.textContent;
+    copyBtn.textContent = '✓ Copié !';
+    copyBtn.classList.add('copied');
+    setTimeout(() => { copyBtn.textContent = original; copyBtn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(onCopied).catch(() => fallbackCopy(text, onCopied));
+  } else {
+    fallbackCopy(text, onCopied);
+  }
+});
+
+function fallbackCopy(text, onDone){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (err) {}
+  document.body.removeChild(ta);
+  if (onDone) onDone();
+}
+
+/* ---------------- Clean view (hide all regions in one click) ---------------- */
+
+let cleanView = false;
+const cleanViewBtn = document.getElementById('cleanViewBtn');
+cleanViewBtn.addEventListener('click', () => {
+  cleanView = !cleanView;
+  layers.forEach(l => {
+    if (!l) return;
+    if (cleanView) map.removeLayer(l); else l.addTo(map);
+  });
+  vertexMarkers.forEach(m => {
+    if (cleanView) map.removeLayer(m); else m.addTo(map);
+  });
+  cleanViewBtn.textContent = cleanView ? '👁 Afficher les régions' : '🧹 Vue propre';
+  cleanViewBtn.classList.toggle('on', cleanView);
 });
 
 /* ---------------- SVG import: new shapes become new draggable/editable regions ---------------- */
