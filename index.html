@@ -179,7 +179,9 @@
     flex:1 1 auto;font-size:14px;font-weight:500;border:none;border-bottom:1px solid transparent;background:transparent;color:var(--ink);
     padding:4px 0;min-width:0;border-radius:0;cursor:text;
   }
+  .region:not(.active) .region-name{pointer-events:none;}
   .region.active .region-name{font-weight:600;}
+  .region.active .region-name:hover{border-bottom-color:var(--brand-100);}
   .region-name:focus{border-bottom-color:var(--wine-300);}
   .region-body{display:none;padding:10px 0 4px;}
   .region.active .region-body{display:block;}
@@ -791,7 +793,7 @@ function addRegionRow(i){
   div.innerHTML = `
     <div class="region-top">
       <div class="swatch" style="background:${s.fill}"></div>
-      <input class="region-name" data-idx="${i}" value="${s.name}" />
+      <input class="region-name" data-idx="${i}" value="${s.name}" aria-label="Nom de la région" title="Renommer" />
     </div>
     <div class="region-body">
       <div class="move-row">
